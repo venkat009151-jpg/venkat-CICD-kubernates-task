@@ -3,9 +3,8 @@ version: 0.2
 env:
   variables:
     AWS_DEFAULT_REGION: us-east-1
-    AWS_ACCOUNT_ID: 084400305795
-    IMAGE_TAG: latest
-    CLUSTER_NAME: my-eks-cluster
+    AWS_ACCOUNT_ID: "084400305795"
+    CLUSTER_NAME: "my-eks-cluster"
 
 phases:
 
@@ -13,30 +12,44 @@ phases:
     runtime-versions:
       docker: 20
     commands:
+      - echo "========== INSTALL PHASE =========="
       - echo Installing kubectl...
       - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
       - chmod +x kubectl
       - mv kubectl /usr/local/bin/
+      - kubectl version --client
 
   pre_build:
     commands:
-      - echo Logging into Amazon ECR...
+      - echo "========== PRE-BUILD PHASE =========="
+      - export IMAGE_TAG=$CODEBUILD_BUILD_NUMBER
+      - echo Image Tag = $IMAGE_TAG
+
+      - echo Logging in to Amazon ECR...
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+
+      - echo Current AWS Identity
+      - aws sts get-caller-identity
 
   build:
     commands:
+      - echo "========== BUILD PHASE =========="
 
-      - echo Building Backend Image...
+      - echo Building Backend Docker Image...
       - docker build -t backend:$IMAGE_TAG ./Backend
 
-      - echo Building Frontend Image...
+      - echo Building Frontend Docker Image...
       - docker build -t frontend:$IMAGE_TAG ./frontend
 
+      - echo Tagging Backend Image...
       - docker tag backend:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/backend:$IMAGE_TAG
+
+      - echo Tagging Frontend Image...
       - docker tag frontend:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/frontend:$IMAGE_TAG
 
   post_build:
     commands:
+      - echo "========== POST-BUILD PHASE =========="
 
       - echo Pushing Backend Image...
       - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/backend:$IMAGE_TAG
@@ -47,15 +60,25 @@ phases:
       - echo Updating kubeconfig...
       - aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
 
-      - echo Updating Kubernetes Deployment...
-
+      - echo Updating Backend Deployment...
       - kubectl set image deployment/backend backend=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/backend:$IMAGE_TAG
 
+      - echo Updating Frontend Deployment...
       - kubectl set image deployment/frontend frontend=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/frontend:$IMAGE_TAG
 
+      - echo Waiting for Backend rollout...
       - kubectl rollout status deployment/backend
 
+      - echo Waiting for Frontend rollout...
       - kubectl rollout status deployment/frontend
+
+      - echo Current Pods
+      - kubectl get pods
+
+      - echo Current Services
+      - kubectl get svc
+
+      - echo Deployment Completed Successfully.
 
 artifacts:
   files:
